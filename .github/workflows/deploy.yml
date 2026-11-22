@@ -45,10 +45,10 @@ jobs:
         id: sg
         run: |
           RUNNER_IP=$(curl -s https://checkip.amazonaws.com | tr -d '\n')
-          SG_ID=$(aws ec2 describe-security-groups --profile new-profile --region "$AWS_REGION" \
+          SG_ID=$(aws ec2 describe-security-groups --profile new-user --region "$AWS_REGION" \
             --filters Name=group-name,Values=library-dev-bastion-sg \
             --query 'SecurityGroups[0].GroupId' --output text)
-          aws ec2 authorize-security-group-ingress --profile new-profile --region "$AWS_REGION" \
+          aws ec2 authorize-security-group-ingress --profile new-user --region "$AWS_REGION" \
             --group-id "$SG_ID" --protocol tcp --port 22 --cidr "$RUNNER_IP/32" || true
           echo "runner_ip=$RUNNER_IP" >> "$GITHUB_OUTPUT"
           echo "sg_id=$SG_ID" >> "$GITHUB_OUTPUT"
@@ -104,6 +104,6 @@ jobs:
       - name: Revoke runner IP
         if: ${{ always() && steps.sg.outputs.sg_id != '' }}
         run: |
-          aws ec2 revoke-security-group-ingress --profile new-profile --region "$AWS_REGION" \
+          aws ec2 revoke-security-group-ingress --profile new-user --region "$AWS_REGION" \
             --group-id "${{ steps.sg.outputs.sg_id }}" --protocol tcp --port 22 \
             --cidr "${{ steps.sg.outputs.runner_ip }}/32" || true
