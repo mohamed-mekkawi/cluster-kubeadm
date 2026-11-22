@@ -16,7 +16,7 @@ on:
         value: ${{ jobs.terraform.outputs.alb_dns }}
 
 env:
-  AWS_REGION: eu-west-1   # لازم يطابق region في terraform.tfvars
+  AWS_REGION: eu-west-1   
 
 jobs:
   terraform:
