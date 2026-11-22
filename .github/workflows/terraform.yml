@@ -56,7 +56,7 @@ jobs:
         continue-on-error: true
 
       - name: Init
-        run: terraform init -input=false -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+        run: terraform init -input=false 
 
       - name: Validate
         run: terraform validate
