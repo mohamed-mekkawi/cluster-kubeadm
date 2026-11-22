@@ -27,9 +27,14 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID" --profile new-user
-          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile new-user
-          aws configure set region "$AWS_REGION" --profile new-user
+          KEY_ID=$(printf %s "$AWS_ACCESS_KEY_ID" | tr -d '[:space:]')
+          SECRET=$(printf %s "$AWS_SECRET_ACCESS_KEY" | tr -d '[:space:]')
+          echo "key id length: ${#KEY_ID} (expected 20)"
+          echo "secret length: ${#SECRET} (expected 40)"
+          mkdir -p ~/.aws
+          printf '[new-user]\naws_access_key_id=%s\naws_secret_access_key=%s\n' "$KEY_ID" "$SECRET" > ~/.aws/credentials
+          printf '[profile new-user]\nregion=%s\n' "$AWS_REGION" > ~/.aws/config
+          chmod 600 ~/.aws/credentials
 
       - uses: actions/setup-python@v5
         with:
