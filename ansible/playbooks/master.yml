@@ -1,0 +1,5 @@
+- name: Initialize control plane
+  hosts: role_master
+  become: true
+  roles:
+    - master

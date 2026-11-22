@@ -1,0 +1,77 @@
+name: Terraform
+
+on:
+  workflow_call:
+    inputs:
+      action:
+        description: "plan | apply | destroy"
+        type: string
+        required: true
+    outputs:
+      bastion_ip:
+        value: ${{ jobs.terraform.outputs.bastion_ip }}
+      master_ip:
+        value: ${{ jobs.terraform.outputs.master_ip }}
+      alb_dns:
+        value: ${{ jobs.terraform.outputs.alb_dns }}
+
+env:
+  AWS_REGION: eu-west-1   # لازم يطابق region في terraform.tfvars
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform/environments/dev
+    outputs:
+      bastion_ip: ${{ steps.out.outputs.bastion_ip }}
+      master_ip: ${{ steps.out.outputs.master_ip }}
+      alb_dns: ${{ steps.out.outputs.alb_dns }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # بنعمل نفس الـ profile (new-profile) اللي الكود بيستخدمه
+      - name: Configure AWS profile
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID" --profile new-profile
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile new-profile
+          aws configure set region "$AWS_REGION" --profile new-profile
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.10"
+          terraform_wrapper: false   # عشان terraform output يرجّع القيمة نضيفة
+
+      - name: Format check
+        run: terraform fmt -check -recursive ../../
+        continue-on-error: true
+
+      - name: Init
+        run: terraform init -input=false -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}"
+
+      - name: Validate
+        run: terraform validate
+
+      - name: Plan
+        run: |
+          if [ "${{ inputs.action }}" = "destroy" ]; then
+            terraform plan -destroy -input=false -out=tfplan
+          else
+            terraform plan -input=false -out=tfplan
+          fi
+
+      - name: Apply
+        if: ${{ inputs.action != 'plan' }}
+        run: terraform apply -input=false tfplan
+
+      - name: Read outputs
+        id: out
+        if: ${{ inputs.action == 'apply' }}
+        run: |
+          echo "bastion_ip=$(terraform output -raw bastion_public_ip)" >> "$GITHUB_OUTPUT"
+          echo "master_ip=$(terraform output -raw master_private_ip)" >> "$GITHUB_OUTPUT"
+          echo "alb_dns=$(terraform output -raw alb_dns_name)" >> "$GITHUB_OUTPUT"

@@ -1,0 +1,33 @@
+# ---------- Secrets (ما ترفعهاش أبداً) ----------
+*.pem
+*.key
+.env
+.env.*
+!.env.example
+.aws/
+
+# ---------- Terraform ----------
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+crash.log
+override.tf
+override.tf.json
+
+# ---------- Ansible / Python ----------
+.venv/
+__pycache__/
+*.retry
+.ansible/
+
+# ---------- Node ----------
+node_modules/
+npm-debug.log*
+
+# ---------- OS / Editors ----------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp

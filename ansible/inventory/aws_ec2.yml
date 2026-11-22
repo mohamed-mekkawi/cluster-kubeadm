@@ -1,0 +1,29 @@
+# Dynamic inventory: Ansible بيسأل AWS مباشرة عن الـ instances الشغالة
+# (عشان الـ ASG ممكن يغيّر الـ IPs في أي وقت)
+plugin: amazon.aws.aws_ec2
+
+aws_profile: new-user
+regions:
+  - eu-west-1
+
+# هات بس الـ instances الشغالة بتاعت المشروع
+filters:
+  instance-state-name: running
+  tag:Name: "library-dev-*"
+
+# استخدم الـ private IP كاسم للـ host (هنوصل عبر الـ bastion)
+hostnames:
+  - private-ip-address
+
+# اعمل groups من الـ tag اسمه Role:
+#   Role=master  -> role_master
+#   Role=worker  -> role_worker
+#   Role=bastion -> role_bastion
+keyed_groups:
+  - key: tags.Role
+    prefix: role
+    separator: "_"
+
+# group اسمه k8s فيه الـ master والـ workers (من غير الـ bastion)
+groups:
+  k8s: "tags.Role in ['master', 'worker']"

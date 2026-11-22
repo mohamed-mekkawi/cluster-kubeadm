@@ -1,0 +1,10 @@
+ansible_user: ubuntu
+ansible_python_interpreter: /usr/bin/python3
+
+ssh_key_path: "~/key-mo.pem"
+
+# الـ nodes ملهاش SSH مباشر، فنعدي من الـ bastion
+# IP الـ bastion بيتاخد من متغير بيئة BASTION_IP
+ansible_ssh_common_args: >-
+  -o StrictHostKeyChecking=no
+  -o ProxyCommand="ssh -i {{ ssh_key_path }} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p -q ubuntu@{{ lookup('env', 'BASTION_IP') }}"

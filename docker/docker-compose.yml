@@ -1,0 +1,51 @@
+# للتجربة المحلية:  docker compose up --build   ثم افتح http://localhost:8080
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: library
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-changeme}
+      POSTGRES_DB: library
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ../app/database/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U library -d library"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  auth-service:
+    build: ../app/backend/auth-service
+    environment:
+      DB_HOST: db
+      DB_USER: library
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: library
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  catalog-service:
+    build: ../app/backend/catalog-service
+    environment:
+      DB_HOST: db
+      DB_USER: library
+      DB_PASSWORD: ${DB_PASSWORD:-changeme}
+      DB_NAME: library
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-change-me}
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ../app/frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - auth-service
+      - catalog-service
+
+volumes:
+  db-data:

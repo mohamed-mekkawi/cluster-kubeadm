@@ -1,0 +1,13 @@
+# Headless Service: الاسم "db" هو اللي الـ backend بيستخدمه (DB_HOST=db)
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  namespace: library
+spec:
+  clusterIP: None
+  selector:
+    app: db
+  ports:
+    - port: 5432
+      targetPort: 5432

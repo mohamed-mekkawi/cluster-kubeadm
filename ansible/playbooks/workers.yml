@@ -1,0 +1,5 @@
+- name: Join workers to the cluster
+  hosts: role_worker
+  become: true
+  roles:
+    - worker

@@ -1,0 +1,26 @@
+- name: Install containerd
+  ansible.builtin.apt:
+    name: containerd
+    state: present
+    update_cache: true
+
+- name: Check if containerd already uses systemd cgroup
+  ansible.builtin.command: grep -q "SystemdCgroup = true" /etc/containerd/config.toml
+  register: cgroup_check
+  failed_when: false
+  changed_when: false
+
+- name: Generate default config with SystemdCgroup=true
+  ansible.builtin.shell: |
+    mkdir -p /etc/containerd
+    containerd config default | sed 's/SystemdCgroup = false/SystemdCgroup = true/' > /etc/containerd/config.toml
+  args:
+    executable: /bin/bash
+  when: cgroup_check.rc != 0
+  notify: Restart containerd
+
+- name: Enable and start containerd
+  ansible.builtin.systemd:
+    name: containerd
+    enabled: true
+    state: started

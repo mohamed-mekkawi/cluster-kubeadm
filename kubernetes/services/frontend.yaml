@@ -1,0 +1,14 @@
+# NodePort 30080: الـ ALB بيبعت الـ traffic على البورت ده في أي worker
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: library
+spec:
+  type: NodePort
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30080

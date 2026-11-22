@@ -1,0 +1,55 @@
+name: Main Pipeline
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "deploy = إنشاء/تحديث كل حاجة | destroy = مسح البنية"
+        type: choice
+        options: [deploy, destroy]
+        default: deploy
+
+# مفيش اتنين pipelines يشتغلوا مع بعض (عشان الـ Terraform state)
+concurrency:
+  group: library-pipeline
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  terraform:
+    uses: ./.github/workflows/terraform.yml
+    with:
+      # PR -> plan بس | push -> apply | يدوي + destroy -> destroy
+      action: ${{ github.event_name == 'pull_request' && 'plan' || (inputs.action == 'destroy' && 'destroy' || 'apply') }}
+    secrets: inherit
+
+  docker:
+    if: ${{ inputs.action != 'destroy' }}
+    uses: ./.github/workflows/docker.yml
+    with:
+      push: ${{ github.event_name != 'pull_request' }}
+    secrets: inherit
+
+  ansible:
+    if: ${{ github.event_name != 'pull_request' && inputs.action != 'destroy' }}
+    needs: terraform
+    uses: ./.github/workflows/ansible.yml
+    with:
+      bastion_ip: ${{ needs.terraform.outputs.bastion_ip }}
+    secrets: inherit
+
+  deploy:
+    if: ${{ github.event_name != 'pull_request' && inputs.action != 'destroy' }}
+    needs: [terraform, docker, ansible]
+    uses: ./.github/workflows/deploy.yml
+    with:
+      bastion_ip: ${{ needs.terraform.outputs.bastion_ip }}
+      master_ip: ${{ needs.terraform.outputs.master_ip }}
+      alb_dns: ${{ needs.terraform.outputs.alb_dns }}
+    secrets: inherit

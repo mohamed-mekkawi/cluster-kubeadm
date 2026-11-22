@@ -1,0 +1,80 @@
+name: Ansible
+
+on:
+  workflow_call:
+    inputs:
+      bastion_ip:
+        type: string
+        required: true
+
+env:
+  AWS_REGION: eu-west-1   # لازم يطابق region في terraform.tfvars
+  AWS_PROFILE: new-user
+
+jobs:
+  ansible:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ansible
+    env:
+      BASTION_IP: ${{ inputs.bastion_ip }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS profile
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          aws configure set aws_access_key_id "$AWS_ACCESS_KEY_ID" --profile new-profile
+          aws configure set aws_secret_access_key "$AWS_SECRET_ACCESS_KEY" --profile new-profile
+          aws configure set region "$AWS_REGION" --profile new-profile
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible
+        run: |
+          pip install ansible boto3 botocore
+          ansible-galaxy collection install -r requirements.yml
+
+      # ansible.cfg بيدوّر على ~/key-mo.pem
+      - name: Write SSH key
+        run: |
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/key-mo.pem
+          chmod 400 ~/key-mo.pem
+
+      # الـ runner ليه IP متغير، فبنفتح SSH له مؤقتاً على الـ bastion
+      - name: Allow runner IP on bastion SG
+        id: sg
+        run: |
+          RUNNER_IP=$(curl -s https://checkip.amazonaws.com | tr -d '\n')
+          SG_ID=$(aws ec2 describe-security-groups --profile new-profile --region "$AWS_REGION" \
+            --filters Name=group-name,Values=library-dev-bastion-sg \
+            --query 'SecurityGroups[0].GroupId' --output text)
+          aws ec2 authorize-security-group-ingress --profile new-profile --region "$AWS_REGION" \
+            --group-id "$SG_ID" --protocol tcp --port 22 --cidr "$RUNNER_IP/32" || true
+          echo "runner_ip=$RUNNER_IP" >> "$GITHUB_OUTPUT"
+          echo "sg_id=$SG_ID" >> "$GITHUB_OUTPUT"
+
+      # الـ instances (خصوصاً اللي من الـ ASG) ممكن تحتاج دقايق لحد ما SSH يشتغل
+      - name: Wait for nodes (SSH)
+        run: |
+          for i in $(seq 1 30); do
+            if ansible k8s -m ping; then exit 0; fi
+            echo "Nodes not ready yet, retry $i/30..."
+            sleep 20
+          done
+          echo "Nodes did not become reachable"; exit 1
+
+      - name: Run playbooks
+        run: ansible-playbook playbooks/site.yml
+
+      - name: Revoke runner IP
+        if: ${{ always() && steps.sg.outputs.sg_id != '' }}
+        run: |
+          aws ec2 revoke-security-group-ingress --profile new-profile --region "$AWS_REGION" \
+            --group-id "${{ steps.sg.outputs.sg_id }}" --protocol tcp --port 22 \
+            --cidr "${{ steps.sg.outputs.runner_ip }}/32" || true

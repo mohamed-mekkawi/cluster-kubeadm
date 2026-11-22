@@ -1,0 +1,45 @@
+name: Docker
+
+on:
+  workflow_call:
+    inputs:
+      push:
+        description: "true = ارفع على Docker Hub | false = build بس (للـ PR)"
+        type: boolean
+        default: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - image: library-frontend
+            context: app/frontend
+          - image: library-auth-service
+            context: app/backend/auth-service
+          - image: library-catalog-service
+            context: app/backend/catalog-service
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        if: ${{ inputs.push }}
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # كل image بتتحط عليها tag = latest و tag = رقم الـ commit
+      - name: Build (and push)
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          push: ${{ inputs.push }}
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ matrix.image }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

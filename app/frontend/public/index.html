@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Library</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>📚 Library</h1>
+    <nav id="nav"></nav>
+  </header>
+
+  <div id="message" class="message hidden"></div>
+
+  <main>
+    <section id="auth-view" class="hidden">
+      <div class="card auth-card">
+        <h2 id="auth-title">Login</h2>
+        <form id="auth-form">
+          <input id="name" placeholder="Name" autocomplete="name" class="hidden">
+          <input id="email" type="email" placeholder="Email" autocomplete="email" required>
+          <input id="password" type="password" placeholder="Password" autocomplete="current-password" required>
+          <button type="submit" id="auth-submit">Login</button>
+        </form>
+        <p><a href="#" id="auth-toggle">No account? Register</a></p>
+      </div>
+    </section>
+
+    <section id="books-view">
+      <h2>Available books</h2>
+      <div id="books" class="grid"></div>
+    </section>
+
+    <section id="tx-view" class="hidden">
+      <h2>My purchases &amp; borrows</h2>
+      <table>
+        <thead><tr><th>Book</th><th>Type</th><th>Status</th><th>Date</th><th>Due</th><th></th></tr></thead>
+        <tbody id="tx-body"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
