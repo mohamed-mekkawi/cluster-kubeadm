@@ -37,6 +37,25 @@
     KUBECONFIG: /home/ubuntu/.kube/config
   when: kubeadm_init is changed
 
+# كلاستر kubeadm مفيهوش storage تلقائي، فبنركّب local-path عشان الـ PVC بتاع الـ database
+- name: Install local-path storage provisioner
+  ansible.builtin.command: >
+    kubectl apply -f
+    https://raw.githubusercontent.com/rancher/local-path-provisioner/{{ local_path_version }}/deploy/local-path-storage.yaml
+  become: false
+  environment:
+    KUBECONFIG: /home/ubuntu/.kube/config
+  changed_when: false
+
+- name: Make local-path the default StorageClass
+  ansible.builtin.command: >
+    kubectl patch storageclass local-path
+    -p '{"metadata":{"annotations":{"storageclass.kubernetes.io/is-default-class":"true"}}}'
+  become: false
+  environment:
+    KUBECONFIG: /home/ubuntu/.kube/config
+  changed_when: false
+
 - name: Create join command for workers
   ansible.builtin.command: kubeadm token create --print-join-command
   register: join_cmd

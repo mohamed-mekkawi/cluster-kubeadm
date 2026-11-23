@@ -4,3 +4,5 @@ kube_version: "1.35"
 # Pod network (Calico)
 pod_network_cidr: "192.168.0.0/16"
 calico_version: "v3.31.3"
+
+local_path_version: "v0.0.31"
