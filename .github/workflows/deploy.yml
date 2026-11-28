@@ -1,3 +1,4 @@
+
 name: Deploy to Kubernetes
 
 on:
@@ -14,14 +15,18 @@ on:
         required: true
 
 env:
-  AWS_REGION: eu-west-1   # لازم يطابق region في terraform.tfvars
+  AWS_REGION: eu-west-1
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
+      # ==========================================
+      # 1. Configure AWS Credentials
+      # ==========================================
       - name: Configure AWS profile
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -29,37 +34,121 @@ jobs:
         run: |
           KEY_ID=$(printf %s "$AWS_ACCESS_KEY_ID" | tr -d '[:space:]')
           SECRET=$(printf %s "$AWS_SECRET_ACCESS_KEY" | tr -d '[:space:]')
-          echo "key id length: ${#KEY_ID} (expected 20)"
-          echo "secret length: ${#SECRET} (expected 40)"
+
+          echo "key id length: ${#KEY_ID}"
+          echo "secret length: ${#SECRET}"
+
           mkdir -p ~/.aws
-          printf '[new-user]\naws_access_key_id=%s\naws_secret_access_key=%s\n' "$KEY_ID" "$SECRET" > ~/.aws/credentials
-          printf '[profile new-user]\nregion=%s\n' "$AWS_REGION" > ~/.aws/config
+
+          printf '[new-user]\naws_access_key_id=%s\naws_secret_access_key=%s\n' \
+            "$KEY_ID" "$SECRET" > ~/.aws/credentials
+
+          printf '[profile new-user]\nregion=%s\n' \
+            "$AWS_REGION" > ~/.aws/config
+
           chmod 600 ~/.aws/credentials
 
+      # ==========================================
+      # 2. Setup SSH Private Key
+      # ==========================================
       - name: Write SSH key
         run: |
-          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/key-mo.pem
+          printf '%s\n' "${{ secrets.SSH_PRIVATE_KEY }}" > ~/key-mo.pem
           chmod 400 ~/key-mo.pem
 
+      # ==========================================
+      # 3. Allow GitHub Runner IP
+      # ==========================================
       - name: Allow runner IP on bastion SG
         id: sg
         run: |
-          RUNNER_IP=$(curl -s https://checkip.amazonaws.com | tr -d '\n')
-          SG_ID=$(aws ec2 describe-security-groups --profile new-user --region "$AWS_REGION" \
+          RUNNER_IP=$(curl -fsS https://checkip.amazonaws.com | tr -d '\n')
+
+          SG_ID=$(aws ec2 describe-security-groups \
+            --profile new-user \
+            --region "$AWS_REGION" \
             --filters Name=group-name,Values=library-dev-bastion-sg \
-            --query 'SecurityGroups[0].GroupId' --output text)
-          aws ec2 authorize-security-group-ingress --profile new-user --region "$AWS_REGION" \
-            --group-id "$SG_ID" --protocol tcp --port 22 --cidr "$RUNNER_IP/32" || true
+            --query 'SecurityGroups[0].GroupId' \
+            --output text)
+
+          aws ec2 authorize-security-group-ingress \
+            --profile new-user \
+            --region "$AWS_REGION" \
+            --group-id "$SG_ID" \
+            --protocol tcp \
+            --port 22 \
+            --cidr "$RUNNER_IP/32" || true
+
           echo "runner_ip=$RUNNER_IP" >> "$GITHUB_OUTPUT"
           echo "sg_id=$SG_ID" >> "$GITHUB_OUTPUT"
 
-      # بنحط اسم الـ Docker Hub user ورقم الـ commit مكان الـ placeholders في ملفات kubernetes/
-      - name: Set image names and tag in manifests
+      # ==========================================
+      # 4. Install Argo CD on Kubernetes Master
+      # ==========================================
+      - name: Install Argo CD
+        env:
+          BASTION_IP: ${{ inputs.bastion_ip }}
+          MASTER_IP: ${{ inputs.master_ip }}
         run: |
-          find kubernetes -name '*.yaml' -o -name '*.yml' | xargs sed -i \
-            -e "s|DOCKERHUB_USER|${{ secrets.DOCKERHUB_USERNAME }}|g" \
-            -e "s|IMAGE_TAG|${{ github.sha }}|g"
+          KEY=~/key-mo.pem
 
+          PROXY="ssh -i $KEY \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -W %h:%p -q ubuntu@$BASTION_IP"
+
+          SSH_OPTS=(-i "$KEY"
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+            -o "ProxyCommand=$PROXY")
+
+          ssh "${SSH_OPTS[@]}" ubuntu@$MASTER_IP 'bash -s' <<'REMOTE'
+          set -e
+
+          echo "Creating Argo CD namespace..."
+
+          kubectl create namespace argocd \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "Installing Argo CD..."
+
+          kubectl apply -n argocd -f \
+            https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
+
+          echo "Waiting for Argo CD pods..."
+
+          kubectl wait \
+            --for=condition=Ready \
+            pods --all \
+            -n argocd \
+            --timeout=600s
+
+          echo "Argo CD installation completed!"
+
+          echo "Argo CD Pods:"
+          kubectl get pods -n argocd
+
+          echo "Argo CD Services:"
+          kubectl get svc -n argocd
+
+          REMOTE
+
+      # ==========================================
+      # 5. Replace Docker Image Names and Tags
+      # ==========================================
+      - name: Set image names and tag in manifests
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          find kubernetes \( -name '*.yaml' -o -name '*.yml' \) \
+            -type f -exec sed -i \
+            -e "s|DOCKERHUB_USER|${DOCKERHUB_USERNAME}|g" \
+            -e "s|IMAGE_TAG|${IMAGE_TAG}|g" {} +
+
+      # ==========================================
+      # 6. Copy Kubernetes Manifests to Master
+      # ==========================================
       - name: Copy manifests to master and apply
         env:
           BASTION_IP: ${{ inputs.bastion_ip }}
@@ -68,42 +157,116 @@ jobs:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
         run: |
           KEY=~/key-mo.pem
-          PROXY="ssh -i $KEY -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -W %h:%p -q ubuntu@$BASTION_IP"
-          SSH_OPTS=(-i "$KEY" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o "ProxyCommand=$PROXY")
 
-          ssh "${SSH_OPTS[@]}" ubuntu@$MASTER_IP "rm -rf ~/deploy && mkdir -p ~/deploy"
-          scp -r "${SSH_OPTS[@]}" kubernetes ubuntu@$MASTER_IP:~/deploy/
-          scp "${SSH_OPTS[@]}" app/database/init.sql ubuntu@$MASTER_IP:~/deploy/
+          PROXY="ssh -i $KEY \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -W %h:%p -q ubuntu@$BASTION_IP"
 
-          # الـ secrets بتتبعت base64 عشان أي رموز خاصة في الباسورد ما تبوّظش الأمر
+          SSH_OPTS=(-i "$KEY"
+            -o StrictHostKeyChecking=no
+            -o UserKnownHostsFile=/dev/null
+            -o "ProxyCommand=$PROXY")
+
+          echo "Preparing deployment directory..."
+
+          ssh "${SSH_OPTS[@]}" ubuntu@$MASTER_IP \
+            "rm -rf ~/deploy && mkdir -p ~/deploy"
+
+          echo "Copying Kubernetes manifests..."
+
+          scp -r "${SSH_OPTS[@]}" \
+            kubernetes ubuntu@$MASTER_IP:~/deploy/
+
+          scp "${SSH_OPTS[@]}" \
+            app/database/init.sql ubuntu@$MASTER_IP:~/deploy/
+
+          # Encode secrets to avoid shell special-character issues
           DB_B64=$(printf %s "$DB_PASSWORD" | base64 -w0)
           JWT_B64=$(printf %s "$JWT_SECRET" | base64 -w0)
 
+          echo "Applying Kubernetes resources..."
+
           ssh "${SSH_OPTS[@]}" ubuntu@$MASTER_IP bash -s <<REMOTE
           set -e
+
           cd ~/deploy
-          kubectl create namespace library --dry-run=client -o yaml | kubectl apply -f -
-          kubectl -n library create configmap db-init --from-file=init.sql --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "Creating library namespace..."
+
+          kubectl create namespace library \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "Creating database ConfigMap..."
+
+          kubectl -n library create configmap db-init \
+            --from-file=init.sql \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "Creating application Secrets..."
+
           kubectl -n library create secret generic library-secrets \
             --from-literal=DB_PASSWORD="\$(echo $DB_B64 | base64 -d)" \
             --from-literal=JWT_SECRET="\$(echo $JWT_B64 | base64 -d)" \
             --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "Deploying Kubernetes manifests..."
+
           kubectl apply -R -f kubernetes/
-          kubectl -n library rollout status statefulset/db --timeout=180s
-          kubectl -n library rollout status deployment/auth-service --timeout=180s
-          kubectl -n library rollout status deployment/catalog-service --timeout=180s
-          kubectl -n library rollout status deployment/frontend --timeout=180s
+
+          echo "Waiting for database..."
+
+          kubectl -n library rollout status statefulset/db \
+            --timeout=180s
+
+          echo "Waiting for auth service..."
+
+          kubectl -n library rollout status deployment/auth-service \
+            --timeout=180s
+
+          echo "Waiting for catalog service..."
+
+          kubectl -n library rollout status deployment/catalog-service \
+            --timeout=180s
+
+          echo "Waiting for frontend..."
+
+          kubectl -n library rollout status deployment/frontend \
+            --timeout=180s
+
+          echo "Application Pods:"
+
           kubectl -n library get pods -o wide
+
+          echo "Deployment completed successfully!"
+
           REMOTE
 
+      # ==========================================
+      # 7. Deployment Summary
+      # ==========================================
       - name: Summary
         run: |
-          echo "### Deployed ✅" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Deployment Completed ✅" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "#### Argo CD" >> "$GITHUB_STEP_SUMMARY"
+          echo "Installed in namespace: argocd" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "#### Application" >> "$GITHUB_STEP_SUMMARY"
+          echo "Namespace: library" >> "$GITHUB_STEP_SUMMARY"
+
           echo "Website: http://${{ inputs.alb_dns }}" >> "$GITHUB_STEP_SUMMARY"
 
+      # ==========================================
+      # 8. Revoke GitHub Runner IP
+      # ==========================================
       - name: Revoke runner IP
         if: ${{ always() && steps.sg.outputs.sg_id != '' }}
         run: |
-          aws ec2 revoke-security-group-ingress --profile new-user --region "$AWS_REGION" \
-            --group-id "${{ steps.sg.outputs.sg_id }}" --protocol tcp --port 22 \
+          aws ec2 revoke-security-group-ingress \
+            --profile new-user \
+            --region "$AWS_REGION" \
+            --group-id "${{ steps.sg.outputs.sg_id }}" \
+            --protocol tcp \
+            --port 22 \
             --cidr "${{ steps.sg.outputs.runner_ip }}/32" || true
