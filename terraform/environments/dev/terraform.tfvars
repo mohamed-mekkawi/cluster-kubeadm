@@ -8,7 +8,7 @@ public_subnet_a_cidr = "10.0.1.0/24"
 public_subnet_b_cidr = "10.0.2.0/24"
 
 # غيّر ده لـ IP بتاعك: افتح https://checkip.amazonaws.com وحط الناتج + /32
-my_ip = "197.54.152.247/32"
+my_ip = "197.54.177.2/32"
 
 # اسم الـ Key Pair على AWS (من غير .pem)
 key_name = "key-mo"
